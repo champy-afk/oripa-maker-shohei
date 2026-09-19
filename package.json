@@ -1,0 +1,8 @@
+{
+  "name": "oripa-pop-studio",
+  "version": "1.0.0",
+  "private": true,
+  "description": "オリパPOP作成ツール",
+  "engines": {"node": "22.x"},
+  "scripts": {"start": "node server.cjs", "check": "node --check server.cjs"}
+}
