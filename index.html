@@ -46,8 +46,26 @@ function sampleImage(i){const c=document.createElement('canvas');c.width=300;c.h
 function defaultState(){return{title:'サプライズオリパ',price:'全150口　1パック 22,222円〜',total:150,fontSize:76,footer:'ハズレは RR',winning:'当たり {count}口',theme:'violet',columns:6,alignment:'center',saveName:'サプライズ オリパ',large:Array.from({length:5},(_,i)=>({productId:products[i]?.id||null,qty:1})),small:[]}}
 function openDb(){return new Promise((resolve,reject)=>{const request=indexedDB.open('oripa-pop-prototype',1);request.onupgradeneeded=()=>request.result.createObjectStore('data');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)})}
 function readDb(){return new Promise((resolve,reject)=>{const r=db.transaction('data').objectStore('data').get('workspace');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)})}
-function persist(){if(!db){$('storageStatus').textContent='ブラウザ保存が使えません。バックアップで保存してください。';return Promise.resolve(false)}return new Promise(resolve=>{const t=db.transaction('data','readwrite');t.objectStore('data').put({version:1,products,projects,state},'workspace');t.oncomplete=()=>{$('storageStatus').textContent='編集中の内容を自動保存しました。';resolve(true)};t.onerror=()=>{$('storageStatus').textContent='保存できませんでした。バックアップを保存してください。';toast('保存容量不足などで保存できませんでした。バックアップを利用してください。');resolve(false)};t.onabort=()=>resolve(false)})}
-function changed(){draw();clearTimeout(saveTimer);saveTimer=setTimeout(persist,300)}
+let storageRevision=null,saveQueue=Promise.resolve(),workspaceDirty=false;
+function persist(){
+ if(!db){$('storageStatus').textContent='保存できていません。バックアップを保存してください。';return Promise.resolve(false)}
+ const snapshot=clone({version:1,products,projects,state});
+ const run=()=>new Promise(resolve=>{
+  let transaction,conflict=false,newRevision;
+  try{transaction=db.transaction('data','readwrite');const store=transaction.objectStore('data'),read=store.get('workspace');
+   read.onsuccess=()=>{const previous=read.result;if((previous?.revision||null)!==storageRevision){conflict=true;transaction.abort();return;}
+    newRevision=uid();snapshot.revision=newRevision;
+    if(previous)store.put(previous,'workspace-previous');store.put(snapshot,'workspace');
+   };
+   transaction.oncomplete=()=>{storageRevision=newRevision;workspaceDirty=false;$('storageStatus').textContent='商品 '+snapshot.products.length+'件・編集内容を保存済み';resolve(true)};
+   transaction.onerror=()=>{};
+   transaction.onabort=()=>{workspaceDirty=true;const message=conflict?'別のタブで保存内容が更新されています。このタブからの上書きを止めました。必要な編集はバックアップし、再読み込みしてください。':'保存できませんでした。バックアップを保存してください。';$('storageStatus').textContent=message;toast(message);resolve(false)};
+  }catch(error){workspaceDirty=true;$('storageStatus').textContent='保存できませんでした。バックアップを保存してください。';resolve(false)}
+ });
+ saveQueue=saveQueue.then(run,run);return saveQueue;
+}
+function changed(){workspaceDirty=true;draw();persist()}
+
 function getImage(src){if(!src)return null;if(imageCache.has(src))return imageCache.get(src);const im=new Image();imageCache.set(src,im);im.onload=()=>draw();im.src=src;return im}
 function rounded(x,y,w,h,r,fill,stroke){ctx.beginPath();ctx.roundRect(x,y,w,h,r);if(fill){ctx.fillStyle=fill;ctx.fill()}if(stroke){ctx.strokeStyle=stroke;ctx.stroke()}}
 function fitText(text,x,y,maxWidth,size,color='#fff0b4',weight='900'){ctx.font=`${weight} ${size}px "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif`;const measured=ctx.measureText(text).width;if(measured>maxWidth)ctx.font=`${weight} ${Math.max(8,size*maxWidth/measured)}px "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif`;ctx.fillStyle=color;ctx.fillText(text,x,y)}
@@ -108,8 +126,9 @@ previewCanvas.addEventListener('pointerup',e=>{const d=previewDrag;if(!d||d.poin
 previewCanvas.addEventListener('pointercancel',finishPreviewDrag);previewCanvas.addEventListener('lostpointercapture',finishPreviewDrag);
 window.addEventListener('blur',finishPreviewDrag);document.addEventListener('keydown',e=>{if(e.key==='Escape')finishPreviewDrag()});
 
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'&&state)persist()});
-(async()=>{try{db=await openDb();const saved=await readDb();if(saved){validateWorkspace(saved);products=saved.products;projects=saved.projects;state=saved.state}}catch(e){db=null;$('storageStatus').textContent='ブラウザ保存を読み込めません。バックアップを利用してください。'}if(!state){products=Array.from({length:5},(_,i)=>({id:uid(),name:['ヴァイオレット','ゴールド','プリズム','フレア','スター'][i]+'（サンプル）',kind:'SAMPLE',image:sampleImage(i)}));state=defaultState()}renderEditor();renderProjects();if(db)await persist()})();
+// Never save an unchanged or stale tab when switching pages.
+window.addEventListener('beforeunload',e=>{if(workspaceDirty){e.preventDefault();e.returnValue='';}});
+(async()=>{try{db=await openDb();const saved=await readDb();if(saved){validateWorkspace(saved);products=saved.products;projects=saved.projects;state=saved.state;storageRevision=saved.revision||null}}catch(e){db=null;$('storageStatus').textContent='ブラウザ保存を読み込めません。バックアップを利用してください。'}if(!state){products=Array.from({length:5},(_,i)=>({id:uid(),name:['ヴァイオレット','ゴールド','プリズム','フレア','スター'][i]+'（サンプル）',kind:'SAMPLE',image:sampleImage(i)}));state=defaultState()}renderEditor();renderProjects();if(db){$('storageStatus').textContent='保存済みの商品 '+products.length+'件を読み込みました。';} })();
 </script>
 </body>
 </html>
